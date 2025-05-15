@@ -72,31 +72,31 @@ def stabilize(frames, descriptor="sift", lag_behind=1):
     old_frame = frames[0] # a.k.a reference frame
     kp1, d1, frame_w_kp1 = describe(old_frame, descriptor)
 
+    def get_transform(_d1, _d2, _new_frame):
+        matches = bf.knnMatch(_d1, _d2, k=2)
+
+        good = []  # used for RANSAC loop
+        good_for_display = []
+        for m, n in matches:
+            if m.distance < 0.5 * n.distance:  # consider changing the threshold (the web says 0.75)
+                good.append(m)
+                good_for_display.append([m])
+
+        matches_image = cv.drawMatchesKnn(old_frame, kp1, _new_frame, kp2, good_for_display, None,
+                                          flags=cv.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+        cv.imwrite(f"matches/matches_{i}.jpg", matches_image)
+
+        points1 = np.array([kp1[m.queryIdx].pt for m in good])  # points on a reference frame
+        points2 = np.array([kp2[m.trainIdx].pt for m in good])  # points on a new frame
+
+        M = ransac.ransac_loop(points1, points2)
+
+        return M
+
     for i, new_frame in enumerate(tqdm(frames[lag_behind:])):
         kp2, d2, frame_w_kp2 = describe(new_frame, descriptor)
 
-        def get_transform(d1, d2):
-            matches = bf.knnMatch(d1, d2, k=2)
-
-            good = [] # used for RANSAC loop
-            good_for_display = []
-            for m, n in matches:
-                if m.distance < 0.5 * n.distance: # consider changing the threshold (the web says 0.75)
-                    good.append(m)
-                    good_for_display.append([m])
-
-            matches_image = cv.drawMatchesKnn(old_frame, kp1, new_frame, kp2, good_for_display, None,
-                                              flags=cv.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
-            cv.imwrite(f"matches/matches_{i}.jpg", matches_image)
-
-            points1 = np.array([kp1[m.queryIdx].pt for m in good]) # points on a reference frame
-            points2 = np.array([kp2[m.trainIdx].pt for m in good]) # points on a new frame
-
-            M = ransac.ransac_loop(points1, points2)
-
-            return M
-
-        transform = get_transform(d1, d2)
+        transform = get_transform(d1, d2, new_frame)
 
         if transform is None:
             # change reference frame and describe
@@ -104,7 +104,7 @@ def stabilize(frames, descriptor="sift", lag_behind=1):
             kp1, d1, frame_w_kp1 = describe(old_frame, descriptor)
 
             # find transform again
-            transform = get_transform(d1, d2)
+            transform = get_transform(d1, d2, new_frame)
             if transform is None:
                 # TODO: come up with what to do if changing reference to the most recent frame didn't help
                 raise ValueError(f"None at {i} :(")
