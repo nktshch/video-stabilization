@@ -1,0 +1,133 @@
+"""Main file."""
+
+# not sure if it's really necessary to split such small project into 2 files
+import ransac
+
+import cv2 as cv
+import numpy as np
+from tqdm import tqdm
+import math
+from pathlib import Path
+
+
+def mp42img(mp4="1.mp4"):
+    """Turns mp4 to list of frames. Also retrieves framerate."""
+    cap = cv.VideoCapture(mp4)
+    fps = cap.get(cv.CAP_PROP_FPS)
+    frames = []
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            print("Cannot receive frame (end of stream?)")
+            break
+        frames.append(frame)
+
+    cap.release()
+    # cv.destroyAllWindows()
+    print(f"Sequence length: {len(frames)}; Framerate: {fps}")
+    return frames, fps
+
+
+def img2mp4(frames, fps, mp4):
+    """Turns list of frames to mp4."""
+    fourcc = cv.VideoWriter_fourcc(*'mp4v')
+    video_writer = cv.VideoWriter(mp4, fourcc, fps, (frames[0].shape[1], frames[0].shape[0]))
+
+    for frame in frames:
+        video_writer.write(frame)
+
+    video_writer.release()
+
+
+def describe(frame, detector_name):
+    """Finds and describes keypoints."""
+    if not detector_name:
+        raise KeyError("Detector name is not given")
+    elif detector_name == "sift":
+        detector = cv.SIFT_create(nfeatures=30)
+    elif detector_name == "orb":
+        detector = cv.ORB_create(nfeatures=50)
+    else:
+        raise NotImplementedError("Unknown detector name")
+
+    gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+    keypoints, descriptors = detector.detectAndCompute(gray, None)
+    frame = cv.drawKeypoints(frame, keypoints, None)
+    # cv.imwrite("keypoints.jpg", frame)
+    return keypoints, descriptors, frame
+
+
+def stabilize(frames, descriptor="sift", lag_behind=1):
+    """Uses RANSAC to warp each frame to match previous.
+
+    Initially all frames are warped to match the first. If at a certain frame warp is not possible
+    (not enough matches or no good transform found), the last warped frame becomes the reference. The process repeats.
+    If warp is still impossible, you are expelled from MIPT.
+    """
+    bf = cv.BFMatcher(cv.NORM_L2) # consider other matchers
+
+    warped_frames = [frames[0]] # first frame is not warped
+    warped_frames_w_kp = [frames[0]]
+
+    old_frame = frames[0] # a.k.a reference frame
+    kp1, d1, frame_w_kp1 = describe(old_frame, descriptor)
+
+    for i, new_frame in enumerate(tqdm(frames[lag_behind:])):
+        kp2, d2, frame_w_kp2 = describe(new_frame, descriptor)
+
+        def get_transform(d1, d2):
+            matches = bf.knnMatch(d1, d2, k=2)
+
+            good = [] # used for RANSAC loop
+            good_for_display = []
+            for m, n in matches:
+                if m.distance < 0.5 * n.distance: # consider changing the threshold (the web says 0.75)
+                    good.append(m)
+                    good_for_display.append([m])
+
+            matches_image = cv.drawMatchesKnn(old_frame, kp1, new_frame, kp2, good_for_display, None,
+                                              flags=cv.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+            cv.imwrite(f"matches/matches_{i}.jpg", matches_image)
+
+            points1 = np.array([kp1[m.queryIdx].pt for m in good]) # points on a reference frame
+            points2 = np.array([kp2[m.trainIdx].pt for m in good]) # points on a new frame
+
+            M = ransac.ransac_loop(points1, points2)
+
+            return M
+
+        transform = get_transform(d1, d2)
+
+        if transform is None:
+            # change reference frame and describe
+            old_frame = warped_frames[-1]
+            kp1, d1, frame_w_kp1 = describe(old_frame, descriptor)
+
+            # find transform again
+            transform = get_transform(d1, d2)
+            if transform is None:
+                # TODO: come up with what to do if changing reference to the most recent frame didn't help
+                raise ValueError(f"None at {i} :(")
+
+        height, width = old_frame.shape[:2]
+
+        warped_frame = cv.warpPerspective(new_frame, transform, (width, height))
+        warped_frame_w_kp = cv.warpPerspective(frame_w_kp2, transform, (width, height))
+
+        warped_frames.append(warped_frame)
+        warped_frames_w_kp.append(warped_frame_w_kp)
+
+    # video will include keypoints
+    return warped_frames_w_kp
+
+
+def main():
+    file = "12_full_hd.mp4"
+    descriptor = "sift"  # probably works best
+    sequence, framerate = mp42img(f"{file}")
+    new_sequence = stabilize(sequence, descriptor=descriptor, lag_behind=1)
+    img2mp4(new_sequence, framerate, f"{file}_{descriptor}")
+
+
+if __name__ == "__main__":
+    main()
