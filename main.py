@@ -67,7 +67,7 @@ def stabilize(frames, descriptor="sift", lag_behind=1):
     bf = cv.BFMatcher(cv.NORM_L2) # consider other matchers
 
     warped_frames = [frames[0]] # first frame is not warped
-    warped_frames_w_kp = [frames[0]]
+    # warped_frames_w_kp = [frames[0]]
 
     old_frame = frames[0] # a.k.a reference frame
     kp1, d1, frame_w_kp1 = describe(old_frame, descriptor)
@@ -112,13 +112,12 @@ def stabilize(frames, descriptor="sift", lag_behind=1):
         height, width = old_frame.shape[:2]
 
         warped_frame = cv.warpPerspective(new_frame, transform, (width, height))
-        warped_frame_w_kp = cv.warpPerspective(frame_w_kp2, transform, (width, height))
+        # warped_frame_w_kp = cv.warpPerspective(frame_w_kp2, transform, (width, height))
 
         warped_frames.append(warped_frame)
-        warped_frames_w_kp.append(warped_frame_w_kp)
+        # warped_frames_w_kp.append(warped_frame_w_kp)
 
-    # video will include keypoints
-    return warped_frames_w_kp
+    return warped_frames
 
 
 def main():
@@ -126,7 +125,7 @@ def main():
     descriptor = "sift"  # probably works best
     sequence, framerate = mp42img(f"{file}")
     new_sequence = stabilize(sequence, descriptor=descriptor, lag_behind=1)
-    img2mp4(new_sequence, framerate, f"{file}_{descriptor}")
+    img2mp4(new_sequence, framerate, f"{descriptor}-{file}")
 
 
 if __name__ == "__main__":
