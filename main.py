@@ -3,12 +3,28 @@
 # not sure if it's really necessary to split such small project into 2 files
 import ransac
 
+import argparse
 import cv2 as cv
 import numpy as np
 from tqdm import tqdm
 import math
 from pathlib import Path
+import os
+import glob
 
+
+def parse_arguments():
+    argp = argparse.ArgumentParser()
+    argp.add_argument('file', help='Video file')
+    argp.add_argument('--lib_func', action='store_true', help='Use getPerspective and 4 samples for finding transform')
+    args = argp.parse_args()
+    return args
+
+
+def empty_folder(folder):
+    files = glob.glob(f"{folder}/*")
+    for f in files:
+        os.remove(f)
 
 def mp42img(mp4="1.mp4"):
     """Turns mp4 to list of frames. Also retrieves framerate."""
@@ -33,7 +49,7 @@ def img2mp4(frames, fps, mp4):
     fourcc = cv.VideoWriter_fourcc(*'mp4v')
     video_writer = cv.VideoWriter(mp4, fourcc, fps, (frames[0].shape[1], frames[0].shape[0]))
 
-    for frame in frames:
+    for i, frame in enumerate(frames):
         video_writer.write(frame)
 
     video_writer.release()
@@ -44,7 +60,7 @@ def describe(frame, detector_name):
     if not detector_name:
         raise KeyError("Detector name is not given")
     elif detector_name == "sift":
-        detector = cv.SIFT_create(nfeatures=30)
+        detector = cv.SIFT_create()
     elif detector_name == "orb":
         detector = cv.ORB_create(nfeatures=50)
     else:
@@ -57,7 +73,7 @@ def describe(frame, detector_name):
     return keypoints, descriptors, frame
 
 
-def stabilize(frames, descriptor="sift", lag_behind=1):
+def stabilize(frames, descriptor="sift", lib_func=False, lag_behind=1):
     """Uses RANSAC to warp each frame to match previous.
 
     Initially all frames are warped to match the first. If at a certain frame warp is not possible
@@ -67,7 +83,7 @@ def stabilize(frames, descriptor="sift", lag_behind=1):
     bf = cv.BFMatcher(cv.NORM_L2) # consider other matchers
 
     warped_frames = [frames[0]] # first frame is not warped
-    # warped_frames_w_kp = [frames[0]]
+    warped_frames_w_kp = [frames[0]]
 
     old_frame = frames[0] # a.k.a reference frame
     kp1, d1, frame_w_kp1 = describe(old_frame, descriptor)
@@ -78,7 +94,7 @@ def stabilize(frames, descriptor="sift", lag_behind=1):
         good = []  # used for RANSAC loop
         good_for_display = []
         for m, n in matches:
-            if m.distance < 0.5 * n.distance:  # consider changing the threshold (the web says 0.75)
+            if m.distance < 0.6 * n.distance:  # consider changing the threshold (the web says 0.75)
                 good.append(m)
                 good_for_display.append([m])
 
@@ -89,7 +105,7 @@ def stabilize(frames, descriptor="sift", lag_behind=1):
         points1 = np.array([kp1[m.queryIdx].pt for m in good])  # points on a reference frame
         points2 = np.array([kp2[m.trainIdx].pt for m in good])  # points on a new frame
 
-        M = ransac.ransac_loop(points1, points2)
+        M = ransac.ransac_loop(points1, points2, threshold=5, lib_func=lib_func)
 
         return M
 
@@ -107,25 +123,33 @@ def stabilize(frames, descriptor="sift", lag_behind=1):
             transform = get_transform(d1, d2, new_frame)
             if transform is None:
                 # TODO: come up with what to do if changing reference to the most recent frame didn't help
-                raise ValueError(f"None at {i} :(")
+                print(f"None at {i} :(")
+                return warped_frames
 
         height, width = old_frame.shape[:2]
 
         warped_frame = cv.warpPerspective(new_frame, transform, (width, height))
-        # warped_frame_w_kp = cv.warpPerspective(frame_w_kp2, transform, (width, height))
+        warped_frame_w_kp = cv.warpPerspective(frame_w_kp2, transform, (width, height))
 
         warped_frames.append(warped_frame)
-        # warped_frames_w_kp.append(warped_frame_w_kp)
+        warped_frames_w_kp.append(warped_frame_w_kp)
+        cv.imwrite(f"warped/{i}.jpg", warped_frame_w_kp)
 
     return warped_frames
 
 
 def main():
-    file = "12_full_hd.mp4"
+    empty_folder("matches")
+    empty_folder("warped")
+    args = parse_arguments()
+    file = args.file
+    lib_func = args.lib_func
+
     descriptor = "sift"  # probably works best
     sequence, framerate = mp42img(f"{file}")
-    new_sequence = stabilize(sequence, descriptor=descriptor, lag_behind=1)
-    img2mp4(new_sequence, framerate, f"{descriptor}-{file}")
+    new_sequence = stabilize(sequence, descriptor=descriptor, lib_func=lib_func, lag_behind=1)
+    new_file = f"{descriptor}-{lib_func}-{file}"
+    img2mp4(new_sequence, framerate, new_file)
 
 
 if __name__ == "__main__":
