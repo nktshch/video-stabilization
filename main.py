@@ -13,10 +13,13 @@ import os
 import glob
 
 
+np.set_printoptions(precision=3, suppress=True)
+
+
 def parse_arguments():
     argp = argparse.ArgumentParser()
     argp.add_argument('file', help='Video file')
-    argp.add_argument('--lib_func', action='store_true', help='Use getPerspective and 4 samples for finding transform')
+    argp.add_argument('func', help='Function used to find transform')
     args = argp.parse_args()
     return args
 
@@ -73,7 +76,7 @@ def describe(frame, detector_name):
     return keypoints, descriptors, frame
 
 
-def stabilize(frames, descriptor="sift", lib_func=False, lag_behind=1):
+def stabilize(frames, descriptor="sift", func="square", lag_behind=1):
     """Uses RANSAC to warp each frame to match previous.
 
     Initially all frames are warped to match the first. If at a certain frame warp is not possible
@@ -88,15 +91,29 @@ def stabilize(frames, descriptor="sift", lib_func=False, lag_behind=1):
     old_frame = frames[0] # a.k.a reference frame
     kp1, d1, frame_w_kp1 = describe(old_frame, descriptor)
 
+    # construct inverse camera matrix
+    f = 1000
+    cy, cx = old_frame.shape[:2]
+    cx /= 2
+    cy /= 2
+    C = np.array([[f, 0, cx],
+                  [0, f, cy],
+                  [0, 0, 1]])
+    C_inv = np.linalg.inv(C)
+
     def get_transform(_d1, _d2, _new_frame):
         matches = bf.knnMatch(_d1, _d2, k=2)
 
         good = []  # used for RANSAC loop
-        good_for_display = []
         for m, n in matches:
             if m.distance < 0.6 * n.distance:  # consider changing the threshold (the web says 0.75)
                 good.append(m)
-                good_for_display.append([m])
+        if len(good) < 25:
+            return None
+        elif len(good) > 100:
+            good = sorted(good, key=lambda x: x.distance)[:100]
+
+        good_for_display = [[m] for m in good]
 
         matches_image = cv.drawMatchesKnn(old_frame, kp1, _new_frame, kp2, good_for_display, None,
                                           flags=cv.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
@@ -105,7 +122,10 @@ def stabilize(frames, descriptor="sift", lib_func=False, lag_behind=1):
         points1 = np.array([kp1[m.queryIdx].pt for m in good])  # points on a reference frame
         points2 = np.array([kp2[m.trainIdx].pt for m in good])  # points on a new frame
 
-        M = ransac.ransac_loop(points1, points2, threshold=5, lib_func=lib_func)
+        M = ransac.ransac_loop(points1, points2, threshold=5, func=func, C_inv=C_inv)
+
+        if func == "svd":
+            return C @ M @ C_inv
 
         return M
 
@@ -123,10 +143,13 @@ def stabilize(frames, descriptor="sift", lib_func=False, lag_behind=1):
             transform = get_transform(d1, d2, new_frame)
             if transform is None:
                 # TODO: come up with what to do if changing reference to the most recent frame didn't help
-                print(f"None at {i} :(")
+                print(f"\nNone at {i} :(")
                 return warped_frames
 
         height, width = old_frame.shape[:2]
+
+        # print("\ntransform")
+        # print(transform)
 
         warped_frame = cv.warpPerspective(new_frame, transform, (width, height))
         warped_frame_w_kp = cv.warpPerspective(frame_w_kp2, transform, (width, height))
@@ -143,12 +166,12 @@ def main():
     empty_folder("warped")
     args = parse_arguments()
     file = args.file
-    lib_func = args.lib_func
+    func = args.func
 
     descriptor = "sift"  # probably works best
     sequence, framerate = mp42img(f"{file}")
-    new_sequence = stabilize(sequence, descriptor=descriptor, lib_func=lib_func, lag_behind=1)
-    new_file = f"{descriptor}-{lib_func}-{file}"
+    new_sequence = stabilize(sequence, descriptor=descriptor, func=func, lag_behind=1)
+    new_file = f"{descriptor}-{func}-{file}"
     img2mp4(new_sequence, framerate, new_file)
 
 
