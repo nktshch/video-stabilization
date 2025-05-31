@@ -92,7 +92,7 @@ def stabilize(frames, descriptor="sift", func="square", lag_behind=1):
     kp1, d1, frame_w_kp1 = describe(old_frame, descriptor)
 
     # construct inverse camera matrix
-    f = 1000
+    f = 1000 # arbitrary value
     cy, cx = old_frame.shape[:2]
     cx /= 2
     cy /= 2

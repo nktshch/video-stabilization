@@ -28,11 +28,11 @@ def find_transform(pair_1, pair_2):
 def find_rotation(A, B):
     """Finds rotation using SVD decomposition."""
 
-    centroidA = np.mean(A, axis=0)
-    centroidB = np.mean(B, axis=0)
+    # centroidA = np.mean(A, axis=0)
+    # centroidB = np.mean(B, axis=0)
 
-    # A -= centroidA
-    # B -= centroidB
+    # # A -= centroidA
+    # # B -= centroidB
 
     H = np.dot(A.T, B)
     U, S, V = np.linalg.svd(H)
@@ -133,33 +133,28 @@ def ransac_loop(points1, points2, iterations=1000, threshold=5, func="square", C
                 best_model = M
                 best_randoms = idx
 
-    print("\n############\nbest_model")
-    print(best_model)
-    print(f"selected randoms: {best_randoms}")
-    # print(f"len(best_inliers): {len(best_inliers)}")
-    print(f"sum(best_distances): {sum(best_distances)}")
-    # print(max(best_distances), min(best_distances))
-
     return best_model
 
-    if func != "svd":
-        return best_model
-
-    dict_distances = {i: d for i, d in enumerate(best_distances)}
-    best_inliers = sorted(dict_distances.keys(), key=lambda i: dict_distances[i])
-
-    print(dict_distances)
-    print(best_inliers)
-
-    inliers_1 = np.array([spatial_1[i] for i in best_inliers[:2]], np.float32)
-    inliers_2 = np.array([spatial_2[i] for i in best_inliers[:2]], np.float32)
-
-    R = find_rotation(inliers_2, inliers_1)
-
-    return R
+    # TODO: find out why code below ruins stabilization
+    # if func != "svd":
+    #     return best_model
+    #
+    # dict_distances = {i: d for i, d in enumerate(best_distances)}
+    # best_inliers = sorted(dict_distances.keys(), key=lambda i: dict_distances[i])
+    #
+    # print(dict_distances)
+    # print(best_inliers)
+    #
+    # inliers_1 = np.array([spatial_1[i] for i in best_inliers[:2]], np.float32)
+    # inliers_2 = np.array([spatial_2[i] for i in best_inliers[:2]], np.float32)
+    #
+    # R = find_rotation(inliers_2, inliers_1)
+    #
+    # return R
 
 
 def simulate():
+    """Method to test and debug the loop."""
     x_coords = np.random.uniform(-300, 300, 100)
     y_coords = np.random.uniform(-300, 300, 100)
     points1 = np.stack([x_coords, y_coords], axis=-1)
@@ -196,15 +191,3 @@ def simulate():
 
 if __name__ == "__main__":
     simulate()
-
-
-    # fig.savefig("points.png")
-    # some_M = find_transform(p1, p2)
-
-    # img = cv.imread("test1.png")
-    # height, width = img.shape[:2]
-    # test_M = np.array([[0.7, -0.7, 100],
-    #                    [0.7, 0.7, 700],
-    #                    [0, 0, 1]], np.float32)
-    # warped_img = cv.warpPerspective(img, test_M, (width, height))
-    # cv.imwrite("warped_img.png", warped_img)
